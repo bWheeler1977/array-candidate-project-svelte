@@ -1,8 +1,8 @@
 <script lang="ts">
-	export let card = false;
+	export let isCard = false;
 </script>
 
-<div class:card>
+<div class:card={isCard}>
 	<slot />
 </div>
 

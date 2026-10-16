@@ -1,0 +1,16 @@
+/* Shared layout width aligned with AppShell main */
+.shell-inner {
+	width: 100%;
+	max-width: 70rem;
+	margin: 0 auto;
+	padding-left: var(--s-4);
+	padding-right: var(--s-4);
+	box-sizing: border-box;
+}
+
+@media (min-width: 768px) {
+	.shell-inner {
+		padding-left: var(--s-6);
+		padding-right: var(--s-6);
+	}
+}

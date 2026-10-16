@@ -6,10 +6,17 @@
 
   --c-white: rgba(255, 255, 255, 1);
   --c-black: rgba(62, 63, 66, 1);
+  /** Modal / overlay dimmer (brand charcoal at 45%). */
+  --c-backdrop-scrim: rgba(62, 63, 66, 0.45);
+  /** Figma literal black (badges, labels); `--c-black` is brand charcoal. */
+  --c-ink: rgba(0, 0, 0, 1);
+  --c-badge-surface: rgba(247, 247, 247, 1);
   --c-gray-lightest: rgba(252, 252, 252, 1);
   --c-gray-lighter: rgba(249, 250, 251, 1);
   --c-gray-light: rgba(237, 237, 237, 1);
   --c-gray: rgba(215, 222, 228, 1);
+  /** Disabled primary actions (Figma: Complete transfer, default state) */
+  --c-gray-medium: rgba(154, 158, 165, 1);
   --c-gray-dark: rgba(138, 149, 168, 1);
   --c-gray-darker: rgba(0, 0, 0, 0);
   --c-gray-darkest: rgba(0, 0, 0, 0);
@@ -50,6 +57,8 @@
   --c-green-light: rgba(126, 231, 180, 1);
   --c-green: rgba(39, 211, 129, 1);
   --c-green-dark: rgba(8, 135, 93, 1);
+  /** Success icon fills (e.g. transfer outcome modal). */
+  --c-green-success: rgba(36, 149, 106, 1);
   --c-green-darker: rgba(0, 0, 0, 0);
   --c-green-darkest: rgba(0, 0, 0, 0);
 
@@ -62,6 +71,8 @@
   --c-blue-darkest: rgba(0, 0, 0, 0);
 
   --primary-ci: var(--c-blue);
+  /** Hairline on primary / gradient surfaces (e.g. total balance card). */
+  --c-on-primary-border: rgba(255, 255, 255, 0.08);
 
   /* ====================================== Font Weights ====================================== */
   --fw-light: 300;

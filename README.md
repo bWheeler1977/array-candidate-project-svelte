@@ -1,137 +1,195 @@
-## Developing
+# NorthWind Bank — Array frontend take-home
 
-Ensure you're using node version ^24.12.0
+SvelteKit (Svelte 4) web component for viewing accounts and transferring funds via the [NorthWind candidate API](https://northwind.dev.array.io/swagger/index.html).
 
-IMPORTANT NOTE:
+## Setup
 
-This project uses Svelte v4, the legacy docs for this are available [here](https://svelte.dev/docs/svelte/legacy-overview)
+Node **^24.12.0** (see `.nvmrc` if present).
 
-Once you've created a project and installed dependencies with `npm install`, start a development server:
+```sh
+npm install
+cp .env.example .env
+```
+
+Add your interview API key to `.env`:
+
+```env
+NORTHWIND_API_KEY=your_key_here
+NORTHWIND_API_BASE_URL=https://northwind.dev.array.io
+```
+
+**Do not commit `.env` or include secrets in submission zips.**
 
 ```sh
 npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+# npm run check   — typecheck
+# npm run test    — unit + integration tests (Vitest; success + failure paths)
+# npm run build   — production build
 ```
 
-## Building
+Svelte 4 docs: [legacy overview](https://svelte.dev/docs/svelte/legacy-overview).
 
-To create a production version of your app:
+---
 
-```sh
-npm run build
+## Design decisions (for reviewers & future maintainers)
+
+These choices are intentional; related code is commented where the behavior is non-obvious.
+
+### Server-first API access
+
+All NorthWind calls run on the **server** (`+layout.server.ts`, `+page.server.ts`, `src/lib/server/northwind.ts`) so the API key never reaches the browser. Responses are **parsed once** at the boundary (`src/lib/types/northwind.ts`, `src/lib/types/domains.ts`); UI components receive plain typed data.
+
+### Domain labels (`GET /domains`) as copy source of truth
+
+Figma mockups use sample product names; real banks expose wording via **domain catalogs**. We load `/domains` **once per navigation** in the root layout (in parallel with accounts/session) and expose a shared lookup via Svelte context (`src/lib/context/domains.ts`).
+
+- `/external/accounts` returns **`account_type`** and **`account_status`** as **codes** (`CHECKING`, `ACTIVE`, …).
+- `/domains` maps each **code** → **`display_name`** + **`description`**.
+- UI shows `display_name`; tooltips use `description` where helpful (e.g. account badges).
+- If `/domains` fails, we **title-case the raw code** so the app still renders.
+
+This keeps the component portable across banks (and leaves room for localized domain payloads later) without hard-coded marketing names in components.
+
+### Multi-user sandbox
+
+The candidate API returns accounts for **multiple holders**. The app simulates a single customer session:
+
+- **Cookie** `northwind_active_user` stores the selected holder (`src/lib/utils/userContext.ts`).
+- **Layout load** fetches all accounts, derives holder list, filters to `accountsForUser`.
+- **Viewing as** switcher posts to **`POST /active-user`** (dedicated route—not a form action on `/`—to avoid 405/method issues with static routing during user switches).
+- Transfers and activity are **scoped** with `filterTransfersForUser` / mock data keyed by `account_holder_name`.
+
+### Recent Activity: mocks + real transfers
+
+NorthWind provides **accounts** and **transfers** only—**no** merchant/payroll transaction API. The Accounts **Recent Activity** panel therefore:
+
+1. **Mocks** (`src/lib/data/mockRecentActivity.ts`) — per-holder sample rows (grocery, payroll, etc.) with `daysAgo` so dates stay within the last 30 days on every page load. Clearly separated (`source: 'mock'` in feed items).
+2. **Real transfers** — from `GET /external/transfers`, merged in `src/lib/utils/recentActivityFeed.ts`.
+
+The **Transfers** page “Recent transfers” list uses **API transfers only** (no mocks).
+
+Activity rows use SVG icons from `src/lib/assets/` (bank, shopping cart, briefcase, etc.) via `ActivityIcon.svelte` and `resolveActivityIconKind()` in `activityIcon.ts`.
+
+### Transfer account hydration (no guessing)
+
+List responses sometimes omit `source_account.account_number` or `destination_account.account_number`. We **do not infer** the other account when a user has 3+ accounts—that could attach activity to the wrong card.
+
+Instead, `hydrateTransfersForDisplay` (`src/lib/server/transfers.ts`) calls **`GET /external/transfers/{id}`** for any row missing either account number, then merges both sides from the detail payload (Swagger includes full account objects). Per-account filtering and signed amounts rely on those numbers matching the user’s accounts.
+
+### Account card → filter Recent Activity
+
+Clicking an account card filters activity to rows linked to that account (`relatedAccountIds`). Click again to clear. Switching **Viewing as** resets the filter.
+
+When filtered, **amount sign is from that account’s perspective** (outbound internal transfer negative on checking, positive on savings). Unfiltered feed keeps transfer `direction` semantics from the API.
+
+### Transfers UX
+
+- **Inactive** accounts appear in dropdowns but are **disabled** with status text from `/domains` (requirement: visible but not selectable).
+- **Validation** on client (`src/lib/utils/transfer.ts`) and server (transfer action) before `POST /external/transfers/initiate`. This covers only what the UI can know safely (active status, balance, amount shape)—not bank product rules such as “transfers allowed from CD.”
+- **API is the authority** for which transfers are permitted. We do not hard-code account-type or transfer-type allowlists on the front end; backend tests and `POST /external/transfers/initiate` (or validate) enforce those rules. When the API rejects a request, we show the **message from NorthWind** in the error modal (`NorthwindApiError` / action outcome)—no silent failures.
+- **Outcomes** use modals (not inline banners) for success and API errors; success triggers `invalidateAll()` to refresh transfers and account payloads from the API.
+
+### Sandbox account balances (API lag)
+
+In the interview sandbox, **`GET /external/accounts` often does not update balances after a successful `POST /external/transfers/initiate`**, even though transfers appear in history. That is a **backend/mock limitation**, not missing `invalidateAll()` on our side.
+
+**Accounts page display:** After a successful transfer in this tab, we apply **in-memory pending deltas** to card and total balances (`src/lib/stores/pendingBalances.ts`) so the UI matches what the user just did. The total balance card shows a note: *Includes pending transfers…*
+
+Pending adjustments are **scoped to the current holder in this browser tab** and are cleared when:
+
+- the page is **fully refreshed**, or  
+- **Viewing as** switches to another holder (`UserSwitcher` → `clearPendingBalances()`).
+
+Transfer form validation and initiate payloads still use **API balances** from the server. When the API eventually returns updated balances (or after refresh/switch), the UI reflects that data and pending state is dropped.
+
+### Styling
+
+Plain CSS + shared design tokens (`src/app.css`, theme preset)—no Tailwind—to match the starter and keep layout aligned with provided Figma references without coupling copy to Figma.
+
+### Accessibility
+
+- Account picker: WAI-ARIA **listbox** on the trigger (`aria-controls`, `aria-activedescendant`) with Arrow/Home/End, typeahead, Enter/Space, and Escape — see `AccountSelectField.svelte`.
+- Transfer outcome **modal**: focus moves to the primary button, **Tab is trapped** (`focusTrap.ts`), Escape and backdrop dismiss, focus returns to the control that opened the dialog.
+- Forms use labels, `aria-invalid` / `aria-describedby` for errors; account filter cards expose an **`aria-label`** for the toggle behavior.
+
+### Embedded in a host banking app
+
+The widget is designed to run **inside** a bank’s authenticated session, not only as a standalone dev app.
+
+1. **Host calls** `POST /embed/init` on the widget origin with JSON:
+   - `accessToken` (required) — customer Bearer token from the bank / NorthWind
+   - `accountHolderName` (optional) — scope when multiple holders exist
+   - `accounts` (optional) — validated snapshot from the host; holder name can be inferred
+   - `apiBaseUrl` (optional) — override API base (e.g. bank BFF)
+2. The server stores the token in an **httpOnly cookie** and uses it for all NorthWind requests (`hooks.server.ts` + `northwind.ts`). The token is not exposed to widget client JS.
+3. **Custom element** (optional): load `/embed/register`, then use `<northwind-banking-widget>` and `element.configure({ accessToken, … })` — see `src/lib/embed/`.
+4. **JS helper**: `initNorthwindEmbedSession()` from `$lib/embed` for same-origin host apps.
+
+Standalone development still uses `NORTHWIND_API_KEY` in `.env`. Embedded mode hides the dev “Viewing as” switcher.
+
+### Out of scope / manual only
+
+- **`POST /external/reset`** — sandbox reset via Swagger/curl only, not wired in UI.
+- **`/bank`**, batch transfers, cancel/reverse — not required by assignment PDF.
+
+---
+
+## Features (assignment checklist)
+
+### Accounts view
+
+| Requirement | Implementation |
+|-------------|----------------|
+| Account name, number, balance, active/inactive | `AccountCard` — domain `display_name` for type/status, masked number, balance |
+| Inactive accounts visually distinct | Muted card + status badge from `/domains` (e.g. Frozen, Closed) |
+| Loading / error states | Skeleton on user switch; API errors on accounts load |
+| Optional: masked numbers, empty state | Masked `**** 1234`; empty copy when no accounts |
+| Extra: filter activity by account | Click an account card to filter Recent Activity to that account; click again to clear (see **Account card → filter Recent Activity** below) |
+
+Data: `GET /external/accounts` + `GET /domains` in `src/routes/+layout.server.ts`.
+
+### Balance transfer view
+
+| Requirement | Implementation |
+|-------------|----------------|
+| From / To dropdowns + amount | `TransferForm` + `AccountSelectField` |
+| Inactive listed but not selectable | Disabled options + domain status in hint text |
+| Frontend validation | Amount, active accounts, balance ≤ available |
+| Success / failure | Modals; invalidate to refresh data |
+
+Data: `POST /external/transfers/initiate`.
+
+### API & TypeScript
+
+- Types and parsers: `src/lib/types/northwind.ts`, `src/lib/types/domains.ts`
+- Server HTTP client: `src/lib/server/northwind.ts` (`NorthwindApiError`)
+- Vitest: parsers, validation, feed rules, hydration, server actions (see below)
+
+---
+
+## Project structure (high level)
+
+```
+src/lib/components/
+  accounts/     AccountsView, AccountCard, RecentActivityPanel, …
+  transfers/    TransferForm, TransferOutcomeModal, RecentTransfersPanel, …
+  layout/       AppShell, UserSwitcher
+src/lib/context/ domains.ts          — Svelte context for label lookup
+src/lib/data/    mockRecentActivity.ts
+src/lib/server/  northwind.ts, userSession.ts, transfers.ts, loadDomains.ts
+src/lib/utils/   account.ts, domainsLookup.ts, recentActivityFeed.ts, transferDisplay.ts, userContext.ts
+src/routes/      +layout.server.ts, +page (accounts), transfers/, active-user/
 ```
 
-You can preview the production build with `npm run preview`.
+---
 
-## Interview Instructions
+## Tests
 
-**SvelteKit Frontend Exercise (Paid)**  
-This paid exercise is designed to evaluate how you design, structure, and implement a small SvelteKit application under realistic constraints. You will be working in a SvelteKit codebase we've provided, using Svelte & TypeScript throughout.
-
----  
-
-**Time Expectation**  
-You may take up to two days to complete this exercise. You are not expected to use the full time, and partial solutions are acceptable.
-
----  
-  
-**Technology & Constraints**  
-The application should be built using SvelteKit and TypeScript and styled with plain CSS (or SCSS if already configured). A shared CSS variables stylesheet has been provided and should be used consistently for spacing, colors, and typography. Please do not use Tailwind, component libraries, or other styling frameworks.
-
-Svelte 4 should be used for this project. Svelte legacy documentation is available here:  
-https://svelte.dev/docs/svelte/legacy-overview
-
-Additional constraints:
-
-- State management is up to you and may include component state, Svelte stores, or derived state
-- API requests should use only the provided endpoints
-- Prioritize clarity, correctness, and maintainability over abstraction or premature optimization
+`npm run test` — Vitest covers domain lookup, parsers, transfer validation, user scoping, recent-activity feed (including account filter and signed amounts), transfer hydration (mocked fetch), transfer form server action, and `POST /active-user`.
 
 ---
 
-**Design & UI**  
-You will receive a Figma design or static UI reference along with API documentation. The UI should closely match the intended layout, spacing, and visual hierarchy shown in the design. Pixel-perfect accuracy is not required, but the result should feel deliberate and well aligned with the reference.
+## Submission notes
 
-Accessibility should be intentionally considered in your markup and styling, including semantic HTML, proper labeling of form controls, keyboard navigability, visible focus states, and appropriate use of color contrast with the provided CSS variables.
-
----
-
-**Application Structure**  
-The application consists of two primary views: an Accounts view and a Balance Transfer view. These views represent different states of the same application and do not need to be implemented as separate routes. Conditional rendering—such as switching views based on a local page value—is perfectly acceptable, and the overall structure and navigation approach are left to your discretion.
-
-You may also choose to implement these views as separate routes if you feel that better matches your design approach; we will not penalize either choice.
-
----
-
-**Accounts View**  
-The Accounts view should fetch a list of bank accounts from the API and present relevant information in a clear and readable format.
-
-At a minimum, the view should:
-
-- Display the account name, account number, balance, and active or inactive status
-- Visually distinguish inactive accounts
-- Handle loading and error states gracefully
-
-Optional enhancements such as masking account numbers or displaying an empty state are welcome but not required.
-
----
-
-**Balance Transfer View**  
-The Balance Transfer view allows a user to move funds between accounts and should be built as a simple, well-validated form.
-
-The view should include:
-
-- “From” and “To” account dropdowns and an input for the transfer amount
-- Inactive accounts listed but not selectable in the dropdowns
-
-In addition:
-
-- Use frontend validation before sending transfer requests - transfers should be prevented for accounts that are not active, or if the amount exceeds the available balance
-- A successful response should display a confirmation message, reset the form, and update the account balances
-- A failed response should display a clear, user-visible error message
-
----
-
-**API Contract & TypeScript Usage**  
-API documentation will describe request and response shapes. We expect explicit TypeScript types or interfaces to be defined for account data, API responses, and transfer request payloads.
-
-In particular:
-
-- API data should be treated as untrusted until it has been typed and handled at the boundaries of your application
-- Avoid relying on implicit typing from `fetch`
-- Network and parsing errors should be handled explicitly
-- Types should drive component props, local state, and any shared state
-- If no feasible API endpoint exists to provide the correct data for a UI element, using mock data is acceptable
-
-Mock data should only be used for UI elements that cannot be reasonably derived from the provided API responses, and any such usage should be clearly documented in the README.
-
----
-
-**What We’re Evaluating**  
-When reviewing submissions, we focus on the following areas:
-
-- **TypeScript:** strong typing throughout the application with minimal use of `any`
-- **Component structure:** clean separation of concerns and sensible parent/child relationships
-- **Markup & styling:** semantic, accessible HTML; clean, maintainable CSS; and consistent use of provided variables
-- **State management:** clear and predictable state flow with appropriate use of local state and stores
-- **Error handling:** thoughtful handling of API failures, validation errors, and user feedback
-
----
-
-**Submission**  
-Please submit:
-
-- A PR containing your work, submitted no more than 2 days after materials provided
-- Updates to the README noting any assumptions or trade-offs, and describing what you would improve with more time
-
----
-
-**Important Links**  
-  
-  Figma password and API key will be provided by the Array talent team.
-
-- **API documentation:** https://northwind.dev.array.io/swagger/index.html#/
-- **Figma:** https://www.figma.com/design/MHYrsFt7CEgzyGu3PhyuKV/Array-front-end-interview?node-id=0-1&p=f&m=dev
-- **Svelte Documentation:** https://svelte.dev/docs/svelte/legacy-overview
+- Exclude `.env`, `node_modules`, and build artifacts per PDF instructions.
+- API key is required at runtime (`NORTHWIND_API_KEY`); missing key throws from the server client with a setup message.
