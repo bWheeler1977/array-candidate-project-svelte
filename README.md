@@ -35,6 +35,10 @@ Svelte 4 docs: [legacy overview](https://svelte.dev/docs/svelte/legacy-overview)
 
 These choices are intentional; related code is commented where the behavior is non-obvious.
 
+There was a potential error noticed in Figma on the Transfer mockups. The label for the field to set the amount to transfer said "Transfer to", just like the above line. I changed that to "Amount" to better match what the field was for. Also, the mobile version of the transfer after the accounts were selected didn't have an amount entered, so the Transfer Summary card didn't really match the same card in the desktop version. I made sure it matched after adding the amount.
+
+I also noticed that the backend wasn't updating the balances after a transfer. I put in an optimistic view on the Total Balance card and the Accounts cards that showed those updated balances with a note that there were pending balances. A page refresh, or changing the user will reset that back to what the endpoint returns. I imagine in a real scenerio, we would be able to get the updated balances, and so wanted to show that.
+
 ### Server-first API access
 
 All NorthWind calls run on the **server** (`+layout.server.ts`, `+page.server.ts`, `src/lib/server/northwind.ts`) so the API key never reaches the browser. Responses are **parsed once** at the boundary (`src/lib/types/northwind.ts`, `src/lib/types/domains.ts`); UI components receive plain typed data.
